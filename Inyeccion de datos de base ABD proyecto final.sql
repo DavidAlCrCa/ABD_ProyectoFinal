@@ -1,315 +1,256 @@
 USE GimnasioDB;
 GO
-
+ 
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
-
+ 
+--------------------------------------------------
+-- CONFIGURACION
+--------------------------------------------------
+DECLARE @RutaBase     NVARCHAR(200) = N'/csv/';
+DECLARE @ArchivosUTF8 BIT           = 1;
+ 
+DECLARE @Imports TABLE (
+    Orden    INT PRIMARY KEY,
+    Tabla    SYSNAME,
+    Archivo  NVARCHAR(100),
+    Sep      NCHAR(1),
+    Esperado INT
+);
+ 
+INSERT INTO @Imports (Orden, Tabla, Archivo, Sep, Esperado) VALUES
+    (1, N'dbo.Socios',         N'Socios.csv',         N';', 1000),
+    (2, N'dbo.Entrenadores',   N'Entrenadores.csv',   N';',   20),
+    (3, N'dbo.TiposMembresia', N'TiposMembresia.csv', N';',    3),
+    (4, N'dbo.Membresias',     N'Membresias.csv',     N',', 1000),  -- usa coma
+    (5, N'dbo.Clases',         N'Clases.csv',         N';',  100),
+    (6, N'dbo.Reservaciones',  N'Reservaciones.csv',  N';', 3000),
+    (7, N'dbo.Pagos',          N'Pagos.csv',          N',', 1500),  -- usa coma
+    (8, N'dbo.Asistencias',    N'Asistencias.csv',    N';', 3000);
+ 
+DECLARE @i INT = 1,
+        @max INT = (SELECT MAX(Orden) FROM @Imports),
+        @Tabla SYSNAME,
+        @Stg SYSNAME,
+        @Archivo NVARCHAR(100),
+        @Sep NCHAR(1),
+        @Esperado INT,
+        @Ruta NVARCHAR(300),
+        @EsCRLF BIT,
+        @RowTerm NVARCHAR(10),
+        @Coll NVARCHAR(60) = CASE WHEN @ArchivosUTF8 = 1
+                                  THEN N' COLLATE Latin1_General_100_CI_AS_SC_UTF8'
+                                  ELSE N'' END,
+        @cols NVARCHAR(MAX),
+        @defs NVARCHAR(MAX),
+        @sql NVARCHAR(MAX),
+        @n INT,
+        @msg NVARCHAR(2000);
+ 
 BEGIN TRY
-
+ 
     BEGIN TRANSACTION;
+ 
 
-    -- 1. VERIFICAR QUE LAS TABLAS ESTEN VACIAS
-    IF EXISTS (SELECT 1 FROM dbo.Socios)
-       OR EXISTS (SELECT 1 FROM dbo.Entrenadores)
-       OR EXISTS (SELECT 1 FROM dbo.TiposMembresia)
-       OR EXISTS (SELECT 1 FROM dbo.Membresias)
-       OR EXISTS (SELECT 1 FROM dbo.Clases)
-       OR EXISTS (SELECT 1 FROM dbo.Reservaciones)
-       OR EXISTS (SELECT 1 FROM dbo.Pagos)
-       OR EXISTS (SELECT 1 FROM dbo.Asistencias)
+    PRINT 'INICIANDO PROCESO DE IMPORTACION';
+
+ 
+    --------------------------------------------------
+    -- 1. ELIMINAR DATOS ANTERIORES (hijas primero)
+    --------------------------------------------------
+    PRINT 'ELIMINANDO DATOS ANTERIORES';
+ 
+    DELETE FROM dbo.Asistencias;
+    DELETE FROM dbo.Pagos;
+    DELETE FROM dbo.Reservaciones;
+    DELETE FROM dbo.Membresias;
+    DELETE FROM dbo.Clases;
+    DELETE FROM dbo.Socios;
+    DELETE FROM dbo.Entrenadores;
+    DELETE FROM dbo.TiposMembresia;
+ 
+    PRINT 'Datos anteriores eliminados correctamente.';
+ 
+    --------------------------------------------------
+    -- 2. IMPORTAR CADA CSV
+    --------------------------------------------------
+    WHILE @i <= @max
     BEGIN
-        THROW 50001,
-        'IMPORTACION CANCELADA: Una o mas tablas ya contienen registros.',
-        1;
+        SELECT @Tabla = Tabla, @Archivo = Archivo, @Sep = Sep, @Esperado = Esperado
+        FROM @Imports
+        WHERE Orden = @i;
+ 
+        SET @Ruta = @RutaBase + @Archivo;
+        SET @Stg  = N'dbo.Stg_' + PARSENAME(@Tabla, 1);
+ 
+        -- 2.1 Detectar CRLF / LF
+        SET @EsCRLF = 0;
+        SET @sql = N'SELECT @crlf = CASE WHEN CHARINDEX(CHAR(13) + CHAR(10), BulkColumn) > 0
+                                         THEN 1 ELSE 0 END
+                     FROM OPENROWSET(BULK ''' + @Ruta + N''', SINGLE_CLOB) AS f;';
+        BEGIN TRY
+            EXEC sp_executesql @sql, N'@crlf BIT OUTPUT', @crlf = @EsCRLF OUTPUT;
+        END TRY
+        BEGIN CATCH
+            SET @msg = CONCAT(N'No se pudo abrir ', @Ruta, N': ', ERROR_MESSAGE());
+            THROW 50001, @msg, 1;
+        END CATCH;
+ 
+        SET @RowTerm = CASE WHEN @EsCRLF = 1 THEN N'0x0d0a' ELSE N'0x0a' END;
+ 
+        -- 2.2 Armar lista de columnas y definicion de la tabla de paso
+        SET @cols = NULL;
+        SET @defs = NULL;
+ 
+        SELECT
+            @cols = STRING_AGG(CAST(QUOTENAME(c.name) AS NVARCHAR(MAX)), N',')
+                        WITHIN GROUP (ORDER BY c.column_id),
+            @defs = STRING_AGG(CAST(QUOTENAME(c.name) + N' ' +
+                        CASE
+                            WHEN t.name IN (N'varchar', N'nvarchar')
+                                THEN N'VARCHAR(' + CAST(y.L2 AS NVARCHAR(10)) + N')' + @Coll
+                            WHEN t.name IN (N'decimal', N'numeric')
+                                THEN t.name + N'(' + CAST(c.precision AS NVARCHAR(5)) + N','
+                                            + CAST(c.scale AS NVARCHAR(5)) + N')'
+                            WHEN t.name = N'datetime2'
+                                THEN N'DATETIME2(' + CAST(c.scale AS NVARCHAR(5)) + N')'
+                            ELSE QUOTENAME(t.name)
+                        END AS NVARCHAR(MAX)), N',')
+                        WITHIN GROUP (ORDER BY c.column_id)
+        FROM sys.columns c
+        JOIN sys.types t ON t.user_type_id = c.user_type_id
+        CROSS APPLY (SELECT CASE WHEN c.max_length = -1 THEN 8000
+                                 ELSE (CASE WHEN t.name = N'nvarchar'
+                                            THEN c.max_length / 2
+                                            ELSE c.max_length END) * 4
+                            END AS L) x
+        CROSS APPLY (SELECT CASE WHEN x.L > 8000 THEN 8000 ELSE x.L END AS L2) y
+        WHERE c.object_id = OBJECT_ID(@Tabla);
+ 
+        IF @cols IS NULL
+        BEGIN
+            SET @msg = CONCAT(N'No se encontro la tabla ', @Tabla, N' en la base de datos.');
+            THROW 50002, @msg, 1;
+        END;
+ 
+        -- 2.3 Crear tabla de paso
+        SET @sql = N'IF OBJECT_ID(''' + @Stg + N''', ''U'') IS NOT NULL DROP TABLE ' + @Stg + N';
+                     CREATE TABLE ' + @Stg + N' (' + @defs + N');';
+        EXEC (@sql);
+ 
+        -- 2.4 BULK INSERT hacia la tabla de paso
+        SET @sql = N'BULK INSERT ' + @Stg + N'
+                     FROM ''' + @Ruta + N'''
+                     WITH (
+                         FIRSTROW = 2,
+                         FIELDTERMINATOR = ''' + @Sep + N''',
+                         ROWTERMINATOR = ''' + @RowTerm + N''',
+                         TABLOCK
+                     );';
+        BEGIN TRY
+            EXEC (@sql);
+        END TRY
+        BEGIN CATCH
+            SET @msg = CONCAT(N'Fallo al leer ', @Ruta, N' (separador "', @Sep,
+                              N'", fin de linea ',
+                              CASE WHEN @EsCRLF = 1 THEN N'CRLF' ELSE N'LF' END,
+                              N'): ', ERROR_MESSAGE());
+            THROW 50003, @msg, 1;
+        END CATCH;
+ 
+        -- 2.5 Validar cantidad leida
+        SET @sql = N'SELECT @n = COUNT(*) FROM ' + @Stg + N';';
+        EXEC sp_executesql @sql, N'@n INT OUTPUT', @n = @n OUTPUT;
+ 
+        IF @n <> @Esperado
+        BEGIN
+            SET @msg = CONCAT(N'El archivo ', @Archivo, N' trajo ', @n,
+                              N' filas y se esperaban ', @Esperado,
+                              N'. Revisa lineas vacias o filas de mas/menos.');
+            THROW 50004, @msg, 1;
+        END;
+ 
+        -- 2.6 Insertar en la tabla real (aqui se validan FK, UNIQUE y CHECK)
+        SET @sql = N'SET IDENTITY_INSERT ' + @Tabla + N' ON;
+                     INSERT INTO ' + @Tabla + N' (' + @cols + N')
+                     SELECT ' + @cols + N' FROM ' + @Stg + N';
+                     SET IDENTITY_INSERT ' + @Tabla + N' OFF;';
+        BEGIN TRY
+            EXEC (@sql);
+        END TRY
+        BEGIN CATCH
+            SET @msg = CONCAT(N'Fallo al insertar en ', @Tabla, N' los datos de ', @Archivo,
+                              N': ', ERROR_MESSAGE());
+            THROW 50005, @msg, 1;
+        END CATCH;
+ 
+        -- 2.7 Eliminar tabla de paso
+        SET @sql = N'DROP TABLE ' + @Stg + N';';
+        EXEC (@sql);
+ 
+        PRINT CONCAT(@Tabla, ' importada correctamente (', @n, ' registros).');
+ 
+        SET @i += 1;
     END;
-
-    -- 2. IMPORTAR SOCIOS
-
-    BULK INSERT dbo.Socios
-    FROM '/csv/Socios.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Socios importados correctamente.';
-
-    -- 3. IMPORTAR ENTRENADORES
-
-    BULK INSERT dbo.Entrenadores
-    FROM '/csv/Entrenadores.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Entrenadores importados correctamente.';
-
-    -- 4. IMPORTAR TIPOS DE MEMBRESIA
-
-    BULK INSERT dbo.TiposMembresia
-    FROM '/csv/TiposMembresia.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Tipos de membresia importados correctamente.';
-
-    -- 5. IMPORTAR MEMBRESIAS
-
-    BULK INSERT dbo.Membresias
-    FROM '/csv/Membresias.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Membresias importadas correctamente.';
-
-    -- 6. IMPORTAR CLASES
-    BULK INSERT dbo.Clases
-    FROM '/csv/Clases.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Clases importadas correctamente.';
-
-    -- 7. IMPORTAR RESERVACIONES
-    BULK INSERT dbo.Reservaciones
-    FROM '/csv/Reservaciones.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Reservaciones importadas correctamente.';
-
-    -- 8. IMPORTAR PAGOS
-    BULK INSERT dbo.Pagos
-    FROM '/csv/Pagos.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        KEEPIDENTITY,
-        CHECK_CONSTRAINTS,
-        TABLOCK
-    );
-
-    PRINT 'Pagos importados correctamente.';
-
-    -- 9. CREAR TABLA AUXILIAR PARA ASISTENCIAS
-
-    IF OBJECT_ID('dbo.Asistencias_Staging', 'U') IS NOT NULL
-        DROP TABLE dbo.Asistencias_Staging;
-
-    CREATE TABLE dbo.Asistencias_Staging (
-        AsistenciaID INT,
-        ReservacionID INT,
-        FechaRegistro DATETIME2,
-        EstadoAsistencia VARCHAR(15)
-    );
-
-    PRINT 'Tabla auxiliar creada correctamente.';
-
-    -- 10. CARGAR CSV DE ASISTENCIAS EN TABLA AUXILIAR
-    BULK INSERT dbo.Asistencias_Staging
-    FROM '/csv/Asistencias.csv'
-    WITH (
-        FIRSTROW = 2,
-        FIELDTERMINATOR = ';',
-        ROWTERMINATOR = '0x0a',
-        TABLOCK
-    );
-
-    PRINT 'CSV de asistencias cargado en tabla auxiliar.';
-
-
-    -- 11. VALIDAR CANTIDAD DE ASISTENCIAS
-
-    IF (SELECT COUNT(*) FROM dbo.Asistencias_Staging) <> 3000
-    BEGIN
-        THROW 50002,
-        'ERROR: La cantidad de asistencias no coincide con los 3000 registros esperados.',
-        1;
-    END;
-
-    -- 12. VALIDAR CLAVES FORANEAS
-
-    IF EXISTS (
-        SELECT 1
-        FROM dbo.Asistencias_Staging A
-        LEFT JOIN dbo.Reservaciones R
-            ON A.ReservacionID = R.ReservacionID
-        WHERE R.ReservacionID IS NULL
-    )
-    BEGIN
-        THROW 50003,
-        'ERROR: Existen asistencias relacionadas con reservaciones inexistentes.',
-        1;
-    END;
-
-    PRINT 'Validacion de claves foraneas completada.';
-
-
-    -- 13. VALIDAR IDENTIFICADORES DUPLICADOS
-
-    IF EXISTS (
-        SELECT ReservacionID
-        FROM dbo.Asistencias_Staging
-        GROUP BY ReservacionID
-        HAVING COUNT(*) > 1
-    )
-    BEGIN
-        THROW 50004,
-        'ERROR: Existen ReservacionID duplicados en el archivo de asistencias.',
-        1;
-    END;
-
-    PRINT 'Validacion de identificadores duplicados completada.';
-
-    -- 14. INSERTAR ASISTENCIAS DEFINITIVAMENTE
-
-    SET IDENTITY_INSERT dbo.Asistencias ON;
-
-    INSERT INTO dbo.Asistencias (
-        AsistenciaID,
-        ReservacionID,
-        FechaRegistro,
-        EstadoAsistencia
-    )
-    SELECT
-        AsistenciaID,
-        ReservacionID,
-        FechaRegistro,
-        EstadoAsistencia
-    FROM dbo.Asistencias_Staging;
-
-    SET IDENTITY_INSERT dbo.Asistencias OFF;
-
-    PRINT 'Asistencias importadas correctamente.';
-
-    -- 15. ELIMINAR TABLA AUXILIAR
-    DROP TABLE dbo.Asistencias_Staging;
-
-    PRINT 'Tabla auxiliar eliminada correctamente.';
-
-    -- 16. VERIFICAR CANTIDADES DE REGISTROS
-    IF (SELECT COUNT(*) FROM dbo.Socios) <> 1000
-       OR (SELECT COUNT(*) FROM dbo.Entrenadores) <> 20
-       OR (SELECT COUNT(*) FROM dbo.TiposMembresia) <> 3
-       OR (SELECT COUNT(*) FROM dbo.Membresias) <> 5
-       OR (SELECT COUNT(*) FROM dbo.Clases) <> 100
-       OR (SELECT COUNT(*) FROM dbo.Reservaciones) <> 3000
-       OR (SELECT COUNT(*) FROM dbo.Pagos) <> 1500
-       OR (SELECT COUNT(*) FROM dbo.Asistencias) <> 3000
-    BEGIN
-        THROW 50005,
-        'ERROR: Una o mas tablas no contienen la cantidad esperada de registros.',
-        1;
-    END;
-
-
-    -- 17. CONFIRMAR TRANSACCION
+ 
+    --------------------------------------------------
+    -- 3. VALIDACION FINAL
+    --------------------------------------------------
+    IF (SELECT COUNT(*) FROM dbo.Socios)          <> 1000
+    OR (SELECT COUNT(*) FROM dbo.Entrenadores)    <> 20
+    OR (SELECT COUNT(*) FROM dbo.TiposMembresia)  <> 3
+    OR (SELECT COUNT(*) FROM dbo.Membresias)      <> 1000
+    OR (SELECT COUNT(*) FROM dbo.Clases)          <> 100
+    OR (SELECT COUNT(*) FROM dbo.Reservaciones)   <> 3000
+    OR (SELECT COUNT(*) FROM dbo.Pagos)           <> 1500
+    OR (SELECT COUNT(*) FROM dbo.Asistencias)     <> 3000
+        THROW 50006, 'ERROR: Una o mas tablas no contienen la cantidad esperada de registros.', 1;
+ 
     COMMIT TRANSACTION;
-
+ 
     PRINT '=========================================';
     PRINT 'IMPORTACION COMPLETADA CORRECTAMENTE';
-    PRINT 'TOTAL: 8628 REGISTROS';
+    PRINT 'TOTAL: 9623 REGISTROS';
     PRINT '=========================================';
-
-
+ 
 END TRY
-
 BEGIN CATCH
-
+ 
+    DECLARE @ErrMsg  NVARCHAR(2000) = ERROR_MESSAGE();
+    DECLARE @ErrNum  INT            = ERROR_NUMBER();
+    DECLARE @ErrLine INT            = ERROR_LINE();
+ 
     IF @@TRANCOUNT > 0
         ROLLBACK TRANSACTION;
-
-    -- Asegurar que IDENTITY_INSERT quede desactivado.
-    BEGIN TRY
-        SET IDENTITY_INSERT dbo.Asistencias OFF;
-    END TRY
-    BEGIN CATCH
-        -- Se ignora si ya estaba desactivado.
-    END CATCH;
-
+ 
     PRINT '=========================================';
     PRINT 'ERROR DURANTE LA IMPORTACION';
-    PRINT ERROR_MESSAGE();
+    PRINT CONCAT('Numero: ', @ErrNum, ' | Linea: ', @ErrLine);
+    PRINT @ErrMsg;
     PRINT 'LA TRANSACCION FUE REVERTIDA';
     PRINT '=========================================';
-
+ 
     THROW;
-
+ 
 END CATCH;
-
 GO
-
--- 18. REPORTE FINAL DE REGISTROS IMPORTADOS
-SELECT 'Socios' AS Tabla, COUNT(*) AS Registros
-FROM dbo.Socios
-
-UNION ALL
-
-SELECT 'Entrenadores', COUNT(*)
-FROM dbo.Entrenadores
-
-UNION ALL
-
-SELECT 'TiposMembresia', COUNT(*)
-FROM dbo.TiposMembresia
-
-UNION ALL
-
-SELECT 'Membresias', COUNT(*)
-FROM dbo.Membresias
-
-UNION ALL
-
-SELECT 'Clases', COUNT(*)
-FROM dbo.Clases
-
-UNION ALL
-
-SELECT 'Reservaciones', COUNT(*)
-FROM dbo.Reservaciones
-
-UNION ALL
-
-SELECT 'Pagos', COUNT(*)
-FROM dbo.Pagos
-
-UNION ALL
-
-SELECT 'Asistencias', COUNT(*)
-FROM dbo.Asistencias;
-
+ 
+ 
+--------------------------------------------------
+-- REPORTE FINAL DE REGISTROS
+--------------------------------------------------
+SELECT 'Socios' AS Tabla, COUNT(*) AS Registros FROM dbo.Socios
+UNION ALL SELECT 'Entrenadores',   COUNT(*) FROM dbo.Entrenadores
+UNION ALL SELECT 'TiposMembresia', COUNT(*) FROM dbo.TiposMembresia
+UNION ALL SELECT 'Membresias',     COUNT(*) FROM dbo.Membresias
+UNION ALL SELECT 'Clases',         COUNT(*) FROM dbo.Clases
+UNION ALL SELECT 'Reservaciones',  COUNT(*) FROM dbo.Reservaciones
+UNION ALL SELECT 'Pagos',          COUNT(*) FROM dbo.Pagos
+UNION ALL SELECT 'Asistencias',    COUNT(*) FROM dbo.Asistencias;
 GO
+ 
+-- Verificacion de acentos (debe verse "Asistió", no "AsistiÃ³"):
+SELECT TOP 5 Nombres, Apellidos FROM dbo.Socios WHERE Nombres LIKE N'%[áéíóúñ]%' OR Apellidos LIKE N'%[áéíóúñ]%';
+SELECT EstadoAsistencia, COUNT(*) AS Total FROM dbo.Asistencias GROUP BY EstadoAsistencia;
+GO
+ 
