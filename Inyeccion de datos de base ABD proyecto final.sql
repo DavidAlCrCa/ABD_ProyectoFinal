@@ -1,25 +1,3 @@
-
-/*
-=========================================================
- PROYECTO: SISTEMA DE RESERVACIONES DE GIMNASIO
- BASE DE DATOS: GimnasioDB
- PROCESO: IMPORTACION DE DATOS DESDE ARCHIVOS CSV
- MOTOR: SQL SERVER EN DOCKER (LINUX)
-
- Archivos requeridos en /csv:
-    Socios.csv
-    Entrenadores.csv
-    TiposMembresia.csv
-    Membresias.csv
-    Clases.csv
-    Reservaciones.csv
-    Pagos.csv
-    Asistencias.csv
-
- Total esperado: 8,628 registros
-=========================================================
-*/
-
 USE GimnasioDB;
 GO
 
@@ -30,15 +8,7 @@ BEGIN TRY
 
     BEGIN TRANSACTION;
 
-    PRINT '=========================================';
-    PRINT 'INICIANDO IMPORTACION DE DATOS';
-    PRINT '=========================================';
-
-
-    --------------------------------------------------
     -- 1. VERIFICAR QUE LAS TABLAS ESTEN VACIAS
-    --------------------------------------------------
-
     IF EXISTS (SELECT 1 FROM dbo.Socios)
        OR EXISTS (SELECT 1 FROM dbo.Entrenadores)
        OR EXISTS (SELECT 1 FROM dbo.TiposMembresia)
@@ -53,10 +23,7 @@ BEGIN TRY
         1;
     END;
 
-
-    --------------------------------------------------
     -- 2. IMPORTAR SOCIOS
-    --------------------------------------------------
 
     BULK INSERT dbo.Socios
     FROM '/csv/Socios.csv'
@@ -71,10 +38,7 @@ BEGIN TRY
 
     PRINT 'Socios importados correctamente.';
 
-
-    --------------------------------------------------
     -- 3. IMPORTAR ENTRENADORES
-    --------------------------------------------------
 
     BULK INSERT dbo.Entrenadores
     FROM '/csv/Entrenadores.csv'
@@ -89,10 +53,7 @@ BEGIN TRY
 
     PRINT 'Entrenadores importados correctamente.';
 
-
-    --------------------------------------------------
     -- 4. IMPORTAR TIPOS DE MEMBRESIA
-    --------------------------------------------------
 
     BULK INSERT dbo.TiposMembresia
     FROM '/csv/TiposMembresia.csv'
@@ -107,10 +68,7 @@ BEGIN TRY
 
     PRINT 'Tipos de membresia importados correctamente.';
 
-
-    --------------------------------------------------
     -- 5. IMPORTAR MEMBRESIAS
-    --------------------------------------------------
 
     BULK INSERT dbo.Membresias
     FROM '/csv/Membresias.csv'
@@ -125,11 +83,7 @@ BEGIN TRY
 
     PRINT 'Membresias importadas correctamente.';
 
-
-    --------------------------------------------------
     -- 6. IMPORTAR CLASES
-    --------------------------------------------------
-
     BULK INSERT dbo.Clases
     FROM '/csv/Clases.csv'
     WITH (
@@ -143,11 +97,7 @@ BEGIN TRY
 
     PRINT 'Clases importadas correctamente.';
 
-
-    --------------------------------------------------
     -- 7. IMPORTAR RESERVACIONES
-    --------------------------------------------------
-
     BULK INSERT dbo.Reservaciones
     FROM '/csv/Reservaciones.csv'
     WITH (
@@ -161,11 +111,7 @@ BEGIN TRY
 
     PRINT 'Reservaciones importadas correctamente.';
 
-
-    --------------------------------------------------
     -- 8. IMPORTAR PAGOS
-    --------------------------------------------------
-
     BULK INSERT dbo.Pagos
     FROM '/csv/Pagos.csv'
     WITH (
@@ -179,10 +125,7 @@ BEGIN TRY
 
     PRINT 'Pagos importados correctamente.';
 
-
-    --------------------------------------------------
     -- 9. CREAR TABLA AUXILIAR PARA ASISTENCIAS
-    --------------------------------------------------
 
     IF OBJECT_ID('dbo.Asistencias_Staging', 'U') IS NOT NULL
         DROP TABLE dbo.Asistencias_Staging;
@@ -196,11 +139,7 @@ BEGIN TRY
 
     PRINT 'Tabla auxiliar creada correctamente.';
 
-
-    --------------------------------------------------
     -- 10. CARGAR CSV DE ASISTENCIAS EN TABLA AUXILIAR
-    --------------------------------------------------
-
     BULK INSERT dbo.Asistencias_Staging
     FROM '/csv/Asistencias.csv'
     WITH (
@@ -213,9 +152,7 @@ BEGIN TRY
     PRINT 'CSV de asistencias cargado en tabla auxiliar.';
 
 
-    --------------------------------------------------
     -- 11. VALIDAR CANTIDAD DE ASISTENCIAS
-    --------------------------------------------------
 
     IF (SELECT COUNT(*) FROM dbo.Asistencias_Staging) <> 3000
     BEGIN
@@ -224,10 +161,7 @@ BEGIN TRY
         1;
     END;
 
-
-    --------------------------------------------------
     -- 12. VALIDAR CLAVES FORANEAS
-    --------------------------------------------------
 
     IF EXISTS (
         SELECT 1
@@ -245,9 +179,7 @@ BEGIN TRY
     PRINT 'Validacion de claves foraneas completada.';
 
 
-    --------------------------------------------------
     -- 13. VALIDAR IDENTIFICADORES DUPLICADOS
-    --------------------------------------------------
 
     IF EXISTS (
         SELECT ReservacionID
@@ -263,10 +195,7 @@ BEGIN TRY
 
     PRINT 'Validacion de identificadores duplicados completada.';
 
-
-    --------------------------------------------------
     -- 14. INSERTAR ASISTENCIAS DEFINITIVAMENTE
-    --------------------------------------------------
 
     SET IDENTITY_INSERT dbo.Asistencias ON;
 
@@ -287,20 +216,12 @@ BEGIN TRY
 
     PRINT 'Asistencias importadas correctamente.';
 
-
-    --------------------------------------------------
     -- 15. ELIMINAR TABLA AUXILIAR
-    --------------------------------------------------
-
     DROP TABLE dbo.Asistencias_Staging;
 
     PRINT 'Tabla auxiliar eliminada correctamente.';
 
-
-    --------------------------------------------------
     -- 16. VERIFICAR CANTIDADES DE REGISTROS
-    --------------------------------------------------
-
     IF (SELECT COUNT(*) FROM dbo.Socios) <> 1000
        OR (SELECT COUNT(*) FROM dbo.Entrenadores) <> 20
        OR (SELECT COUNT(*) FROM dbo.TiposMembresia) <> 3
@@ -316,10 +237,7 @@ BEGIN TRY
     END;
 
 
-    --------------------------------------------------
     -- 17. CONFIRMAR TRANSACCION
-    --------------------------------------------------
-
     COMMIT TRANSACTION;
 
     PRINT '=========================================';
@@ -355,11 +273,7 @@ END CATCH;
 
 GO
 
-
---------------------------------------------------
 -- 18. REPORTE FINAL DE REGISTROS IMPORTADOS
---------------------------------------------------
-
 SELECT 'Socios' AS Tabla, COUNT(*) AS Registros
 FROM dbo.Socios
 
