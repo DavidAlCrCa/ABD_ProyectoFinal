@@ -47,7 +47,7 @@ declare @n int = 300000;
 )
 insert into Pagos (PagoID, MembresiaID, FechaPago, Monto, MetodoPago, Referencia, Estado)
 select 1500 + n,
-       1 + abs(checksum(newid())) % 5,
+       1 + abs(checksum(newid())) % 1000,
        dateadd(hour, -(abs(checksum(newid())) % 21600), '2026-06-01'),
        choose(1 + abs(checksum(newid())) % 3, 20, 35, 180),
        choose(1 + abs(checksum(newid())) % 3, 'Efectivo', 'Tarjeta', 'Transferencia'),
@@ -69,7 +69,7 @@ from numeros;
 
 insert into Asistencias (AsistenciaID, ReservacionID, FechaRegistro, EstadoAsistencia)
 select ReservacionID, ReservacionID, dateadd(day, 2, FechaReservacion),
-       choose(1 + abs(checksum(newid())) % 3, N'Asistió', 'Ausente', 'Justificada')
+       choose(1 + abs(checksum(newid())) % 3, 'Asistió', 'Ausente', 'Justificada')
 from Reservaciones
 where ReservacionID > 3000;
 
@@ -91,7 +91,7 @@ with asistencias_socio as (
     from Asistencias a
     join Reservaciones r on r.ReservacionID = a.ReservacionID
     join Clases c on c.ClaseID = r.ClaseID
-    where a.EstadoAsistencia = N'Asistió'
+    where a.EstadoAsistencia = 'Asistió'
       and r.Estado in ('Confirmada', 'Completada')
     group by c.Nombre, r.SocioID
 ),
@@ -208,7 +208,7 @@ with asistencias_socio as (
     from Asistencias a
     join Reservaciones r on r.ReservacionID = a.ReservacionID
     join Clases c on c.ClaseID = r.ClaseID
-    where a.EstadoAsistencia = N'Asistió'
+    where a.EstadoAsistencia = 'Asistió'
       and r.Estado in ('Confirmada', 'Completada')
     group by c.Nombre, r.SocioID
 ),
