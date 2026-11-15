@@ -3,6 +3,7 @@ use GimnasioDB;
 go
 
 --consultas de gestión de socios y membresías
+  
 --a1.socios activos con su membresía vigente y tipo
 select s.SocioID, s.Nombres, s.Apellidos, t.Nombre as tipo_membresia, m.FechaInicio, m.FechaFin
 from Socios s
@@ -70,8 +71,6 @@ go
 
 
 -- c1 top 3 de socios con más asistencias efectivas en cada tipo de clase
---     funciones ventana rank() y dense_rank() con partition by
---     (solo reservaciones vigentes: confirmadas o completadas)
 with asistencias_socio as (
     select c.Nombre as clase, r.SocioID, count(*) as total_asistencias
     from Asistencias a
@@ -95,7 +94,6 @@ where rk.posicion_densa <= 3
 order by rk.clase, rk.posicion, socio;
 
 --c2 ingresos mensuales (pagos pagados), acumulado y variación contra el mes anterior
---     funciones ventana: sum() over (acumulado) y lag()
 with ingresos_mes as (
     select datefromparts(year(FechaPago), month(FechaPago), 1) as mes,
            sum(Monto) as ingreso,
@@ -114,7 +112,6 @@ from ingresos_mes
 order by mes;
 
 -- c3 top 3 clases con más reservas de cada entrenador
---     funciones ventana: row_number() con partition by y sum() over (partition by)
 with reservas_clase as (
     select c.ClaseID, c.Nombre as clase, c.EntrenadorID, c.FechaHoraInicio,
            count(r.ReservacionID) as total_reservas
@@ -139,7 +136,6 @@ where o.rn <= 3
 order by entrenador, posicion;
 
 --c4 días entre reservaciones consecutivas de cada socio
---     función ventana: lag() con partition by
 select r.SocioID, r.ReservacionID, r.FechaReservacion,
        lag(r.FechaReservacion) over (partition by r.SocioID order by r.FechaReservacion) as reservacion_anterior,
        datediff(day, lag(r.FechaReservacion) over (partition by r.SocioID order by r.FechaReservacion),
