@@ -79,7 +79,6 @@ select (select count(*) from Pagos) as Pagos,
 go
 
 -- medición antes (sin índices no clustered)
---antes: guardar lecturas lógicas, tiempos y plan
 checkpoint;
 dbcc dropcleanbuffers;
 set statistics io on;
@@ -87,8 +86,6 @@ set statistics time on;
 -- activar "incluir plan de ejecución real" (ctrl+m) antes de ejecutar
 
 -- c1 top 3 de socios con más asistencias efectivas en cada tipo de clase
---     funciones ventana: rank() y dense_rank() con partition by
---     (se excluyen reservaciones canceladas)
 with asistencias_socio as (
     select c.Nombre as clase, r.SocioID, count(*) as total_asistencias
     from Asistencias a
@@ -112,7 +109,6 @@ where rk.posicion_densa <= 3
 order by rk.clase, rk.posicion, socio;
 
 -- c2 ingresos mensuales (pagos pagados), acumulado y variación contra el mes anterior
---     funciones ventana: sum() over (acumulado) y lag()
 with ingresos_mes as (
     select datefromparts(year(FechaPago), month(FechaPago), 1) as mes,
            sum(Monto) as ingreso,
@@ -131,7 +127,6 @@ from ingresos_mes
 order by mes;
 
 -- c3 top 3 clases con más reservas de cada entrenador
---     funciones ventana: row_number() con partition by y sum() over (partition by)
 with reservas_clase as (
     select c.ClaseID, c.Nombre as clase, c.EntrenadorID, c.FechaHoraInicio,
            count(r.ReservacionID) as total_reservas
@@ -208,8 +203,6 @@ set statistics time on;
 -- activar "incluir plan de ejecución real" (ctrl+m) antes de ejecutar
 
 -- c1 top 3 de socios con más asistencias efectivas en cada tipo de clase
---     funciones ventana: rank() y dense_rank() con partition by
---     (se excluyen reservaciones canceladas)
 with asistencias_socio as (
     select c.Nombre as clase, r.SocioID, count(*) as total_asistencias
     from Asistencias a
@@ -233,7 +226,6 @@ where rk.posicion_densa <= 3
 order by rk.clase, rk.posicion, socio;
 
 -- c2 ingresos mensuales (pagos pagados), acumulado y variación contra el mes anterior
---     funciones ventana: sum() over (acumulado) y lag()
 with ingresos_mes as (
     select datefromparts(year(FechaPago), month(FechaPago), 1) as mes,
            sum(Monto) as ingreso,
