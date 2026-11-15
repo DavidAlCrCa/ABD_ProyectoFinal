@@ -1,7 +1,3 @@
-/* GimnasioDB - Seguridad y auditoria SQL Server
-   Ejecutar con cuenta administradora. Revisar ruta de auditoria y contrasenas.
-   No mueve tablas dbo ni modifica datos de negocio.
-*/
 USE GimnasioDB;
 GO
 -- 1. Esquemas organizativos, sin transferir objetos existentes
@@ -39,9 +35,7 @@ GRANT SELECT ON OBJECT::dbo.Clases TO rol_entrenador;
 GRANT SELECT ON OBJECT::dbo.Entrenadores TO rol_entrenador;
 GRANT SELECT ON OBJECT::dbo.Reservaciones TO rol_entrenador;
 GO
-/* 4. Usuarios de prueba SIN LOGIN: adecuados para EXECUTE AS USER.
-   En produccion crear LOGIN y USER FOR LOGIN o usar identidades corporativas.
-   Si se requieren conexiones separadas, usar el bloque opcional de mas abajo. */
+-- 4. Usuarios de prueba SIN LOGIN
 IF DATABASE_PRINCIPAL_ID(N'usuario_admin_demo') IS NULL CREATE USER usuario_admin_demo WITHOUT LOGIN;
 IF DATABASE_PRINCIPAL_ID(N'usuario_recepcion_demo') IS NULL CREATE USER usuario_recepcion_demo WITHOUT LOGIN;
 IF DATABASE_PRINCIPAL_ID(N'usuario_entrenador_demo') IS NULL CREATE USER usuario_entrenador_demo WITHOUT LOGIN;
@@ -50,10 +44,6 @@ IF IS_ROLEMEMBER(N'rol_administrador', N'usuario_admin_demo') <> 1 ALTER ROLE ro
 IF IS_ROLEMEMBER(N'rol_recepcionista', N'usuario_recepcion_demo') <> 1 ALTER ROLE rol_recepcionista ADD MEMBER usuario_recepcion_demo;
 IF IS_ROLEMEMBER(N'rol_entrenador', N'usuario_entrenador_demo') <> 1 ALTER ROLE rol_entrenador ADD MEMBER usuario_entrenador_demo;
 GO
--- 5. Auditoria: ajustar ruta existente y permisos de escritura del servicio SQL Server.
--- En Linux/Docker, por ejemplo: /var/opt/mssql/audit/ (montar volumen persistente).
--- En Windows, por ejemplo: C:\SQLAudit\ (carpeta existente).
--- Ejecutar este bloque por separado DESPUES de ajustar FILEPATH.
 /*
 USE master;
 GO
@@ -104,12 +94,4 @@ JOIN sys.objects AS ob ON ob.object_id = pe.major_id
 WHERE pr.name IN ('rol_administrador','rol_recepcionista','rol_entrenador')
 ORDER BY pr.name, ob.name, pe.permission_name;
 GO
-/* NOTAS:
-- Un SELECT sobre dbo.Socios concede acceso a TODAS sus columnas y filas: usar vistas
-  o Row-Level Security para limitar datos de socios a cada entrenador.
-- Los roles no impiden operaciones a traves de otros roles o permisos heredados.
-- Las reglas de negocio (p.ej. no editar pagos ya conciliados) requieren procedimientos,
-  restricciones o logica adicional.
-- La auditoria captura eventos, no necesariamente valores antes/despues.
-- Los usuarios WITHOUT LOGIN no pueden conectarse por su cuenta: son solo para pruebas.
-*/
+
