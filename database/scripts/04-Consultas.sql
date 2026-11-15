@@ -76,7 +76,7 @@ with asistencias_socio as (
     from Asistencias a
     join Reservaciones r on r.ReservacionID = a.ReservacionID
     join Clases c on c.ClaseID = r.ClaseID
-    where a.EstadoAsistencia = N'Asistió'
+    where a.EstadoAsistencia = 'Asistió'
       and r.Estado in ('Confirmada', 'Completada')
     group by c.Nombre, r.SocioID
 ),

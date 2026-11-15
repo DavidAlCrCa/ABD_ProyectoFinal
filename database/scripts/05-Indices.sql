@@ -1,4 +1,4 @@
---índices para optimizar las consultas de 07_consultas.sql
+--índices para optimizar las consultas de 04-Consultas.sql
 use GimnasioDB;
 go
 -- c2: filtra por estado y rango de fecha, suma monto (índice cubriente)
@@ -21,7 +21,7 @@ drop index if exists ix_reservaciones_socioid_fecha on Reservaciones;
 create nonclustered index ix_reservaciones_socioid_fecha
 on Reservaciones (SocioID, FechaReservacion) include (Estado, ClaseID);
 
--- c3. filtrar asistencias por estado y devolver ReservacionID (cubriente; el UQ existente solo cubre ReservacionID)
+-- c1: filtrar asistencias por estado y devolver ReservacionID (cubriente; el UQ existente solo cubre ReservacionID)
 drop index if exists ix_asistencias_estado_reservacionid on Asistencias;
 create nonclustered index ix_asistencias_estado_reservacionid
 on Asistencias (EstadoAsistencia, ReservacionID);
@@ -44,6 +44,7 @@ from sys.indexes i
 left join sys.dm_db_index_usage_stats s
        on s.object_id = i.object_id and s.index_id = i.index_id and s.database_id = db_id()
 where i.name like 'ix[_]%'
+  and objectproperty(i.object_id, 'IsUserTable') = 1
 order by tabla, indice;
 
 --revision de fragmentacion
