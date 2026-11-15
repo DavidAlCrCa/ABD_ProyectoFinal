@@ -4,9 +4,7 @@ GO
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
  
---------------------------------------------------
 -- CONFIGURACION
---------------------------------------------------
 DECLARE @RutaBase     NVARCHAR(200) = N'/csv/';
 DECLARE @ArchivosUTF8 BIT           = 1;
  
@@ -55,9 +53,7 @@ BEGIN TRY
     PRINT 'INICIANDO PROCESO DE IMPORTACION';
 
  
-    --------------------------------------------------
-    -- 1. ELIMINAR DATOS ANTERIORES (hijas primero)
-    --------------------------------------------------
+    --ELIMINAR DATOS ANTERIORES (hijas primero)
     PRINT 'ELIMINANDO DATOS ANTERIORES';
  
     DELETE FROM dbo.Asistencias;
@@ -71,9 +67,7 @@ BEGIN TRY
  
     PRINT 'Datos anteriores eliminados correctamente.';
  
-    --------------------------------------------------
-    -- 2. IMPORTAR CADA CSV
-    --------------------------------------------------
+    --IMPORTAR CADA CSV
     WHILE @i <= @max
     BEGIN
         SELECT @Tabla = Tabla, @Archivo = Archivo, @Sep = Sep, @Esperado = Esperado
@@ -83,7 +77,7 @@ BEGIN TRY
         SET @Ruta = @RutaBase + @Archivo;
         SET @Stg  = N'dbo.Stg_' + PARSENAME(@Tabla, 1);
  
-        -- 2.1 Detectar CRLF / LF
+        --Detectar CRLF / LF
         SET @EsCRLF = 0;
         SET @sql = N'SELECT @crlf = CASE WHEN CHARINDEX(CHAR(13) + CHAR(10), BulkColumn) > 0
                                          THEN 1 ELSE 0 END
@@ -98,7 +92,7 @@ BEGIN TRY
  
         SET @RowTerm = CASE WHEN @EsCRLF = 1 THEN N'0x0d0a' ELSE N'0x0a' END;
  
-        -- 2.2 Armar lista de columnas y definicion de la tabla de paso
+        --Armar lista de columnas y definicion de la tabla de paso
         SET @cols = NULL;
         SET @defs = NULL;
  
@@ -133,12 +127,12 @@ BEGIN TRY
             THROW 50002, @msg, 1;
         END;
  
-        -- 2.3 Crear tabla de paso
+        -- Crear tabla de paso
         SET @sql = N'IF OBJECT_ID(''' + @Stg + N''', ''U'') IS NOT NULL DROP TABLE ' + @Stg + N';
                      CREATE TABLE ' + @Stg + N' (' + @defs + N');';
         EXEC (@sql);
  
-        -- 2.4 BULK INSERT hacia la tabla de paso
+        --BULK INSERT hacia la tabla de paso
         SET @sql = N'BULK INSERT ' + @Stg + N'
                      FROM ''' + @Ruta + N'''
                      WITH (
@@ -158,7 +152,7 @@ BEGIN TRY
             THROW 50003, @msg, 1;
         END CATCH;
  
-        -- 2.5 Validar cantidad leida
+        --Validar cantidad leida
         SET @sql = N'SELECT @n = COUNT(*) FROM ' + @Stg + N';';
         EXEC sp_executesql @sql, N'@n INT OUTPUT', @n = @n OUTPUT;
  
@@ -170,7 +164,7 @@ BEGIN TRY
             THROW 50004, @msg, 1;
         END;
  
-        -- 2.6 Insertar en la tabla real (aqui se validan FK, UNIQUE y CHECK)
+        --Insertar en la tabla real (aqui se validan FK, UNIQUE y CHECK)
         SET @sql = N'SET IDENTITY_INSERT ' + @Tabla + N' ON;
                      INSERT INTO ' + @Tabla + N' (' + @cols + N')
                      SELECT ' + @cols + N' FROM ' + @Stg + N';
@@ -184,7 +178,7 @@ BEGIN TRY
             THROW 50005, @msg, 1;
         END CATCH;
  
-        -- 2.7 Eliminar tabla de paso
+        --Eliminar tabla de paso
         SET @sql = N'DROP TABLE ' + @Stg + N';';
         EXEC (@sql);
  
@@ -193,9 +187,7 @@ BEGIN TRY
         SET @i += 1;
     END;
  
-    --------------------------------------------------
-    -- 3. VALIDACION FINAL
-    --------------------------------------------------
+    --VALIDACION FINAL
     IF (SELECT COUNT(*) FROM dbo.Socios)          <> 1000
     OR (SELECT COUNT(*) FROM dbo.Entrenadores)    <> 20
     OR (SELECT COUNT(*) FROM dbo.TiposMembresia)  <> 3
@@ -236,9 +228,7 @@ END CATCH;
 GO
  
  
---------------------------------------------------
 -- REPORTE FINAL DE REGISTROS
---------------------------------------------------
 SELECT 'Socios' AS Tabla, COUNT(*) AS Registros FROM dbo.Socios
 UNION ALL SELECT 'Entrenadores',   COUNT(*) FROM dbo.Entrenadores
 UNION ALL SELECT 'TiposMembresia', COUNT(*) FROM dbo.TiposMembresia
