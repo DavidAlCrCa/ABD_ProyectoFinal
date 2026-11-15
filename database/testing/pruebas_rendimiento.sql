@@ -39,7 +39,7 @@ go
 --agregar volumen
 -- volumen: +300,000 pagos  +300,000 reservaciones y asistencias
 set nocount on;
-declare @n int = 300000;
+declare @n int = 50000;
 
 ;with numeros as (
     select top (@n) row_number() over (order by (select null)) as n
